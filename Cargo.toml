@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/trae_core"]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Wyy326/local-context-bridge"

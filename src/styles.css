@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 20% 97%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 222 47% 11%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 222 47% 11%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 1180px;
+  font-family: Inter, "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  background: hsl(var(--background));
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: #cbd5e1;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  width: min(420px, calc(100vw - 40px));
+  pointer-events: none;
+}

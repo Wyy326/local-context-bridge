@@ -1,0 +1,24 @@
+[package]
+name = "local-context-bridge"
+version = "0.1.0"
+description = "Local desktop tool for moving local chat context between TRAE SOLO CN accounts."
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "local_context_bridge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "local-context-bridge"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.3", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.15"
+tauri = { version = "2.7", features = [] }
+trae_core = { path = "../crates/trae_core" }
