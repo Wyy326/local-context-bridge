@@ -36,6 +36,12 @@ pub const HMAC_SIZE: usize = 64;
 
 type HmacSha512 = Hmac<Sha512>;
 
+#[derive(Debug, Clone, Copy)]
+struct WalFrame {
+    page_no: u32,
+    page_start: usize,
+}
+
 pub fn is_plain_sqlite(path: &Path) -> CoreResult<bool> {
     let mut file = File::open(path)?;
     let mut magic = [0u8; 16];
@@ -308,10 +314,18 @@ pub fn checkpoint_wal_into_copy(db_copy: &Path, wal_path: &Path) -> CoreResult<(
     }
     let mut page_size = u32::from_be_bytes([wal[8], wal[9], wal[10], wal[11]]) as usize;
     if page_size == 0 {
-        page_size = 1024;
+        page_size = PAGE_SIZE;
+    }
+    if page_size != PAGE_SIZE {
+        return Err(CoreError::Message(format!(
+            "unsupported WAL page size {page_size}; expected {PAGE_SIZE}"
+        )));
     }
     let frame_size = 24 + page_size;
-    let mut db = OpenOptions::new().read(true).write(true).open(db_copy)?;
+    let salt_1 = u32::from_be_bytes([wal[16], wal[17], wal[18], wal[19]]);
+    let salt_2 = u32::from_be_bytes([wal[20], wal[21], wal[22], wal[23]]);
+    let mut frames = Vec::new();
+    let mut last_commit: Option<(usize, u32)> = None;
     let mut offset = 32usize;
     while offset + frame_size <= wal.len() {
         let page_no = u32::from_be_bytes([
@@ -319,15 +333,53 @@ pub fn checkpoint_wal_into_copy(db_copy: &Path, wal_path: &Path) -> CoreResult<(
             wal[offset + 1],
             wal[offset + 2],
             wal[offset + 3],
-        ]) as u64;
-        if page_no > 0 {
-            let page_offset = (page_no - 1) * page_size as u64;
-            let page_start = offset + 24;
-            db.seek(SeekFrom::Start(page_offset))?;
-            db.write_all(&wal[page_start..page_start + page_size])?;
+        ]);
+        let db_size = u32::from_be_bytes([
+            wal[offset + 4],
+            wal[offset + 5],
+            wal[offset + 6],
+            wal[offset + 7],
+        ]);
+        let frame_salt_1 = u32::from_be_bytes([
+            wal[offset + 8],
+            wal[offset + 9],
+            wal[offset + 10],
+            wal[offset + 11],
+        ]);
+        let frame_salt_2 = u32::from_be_bytes([
+            wal[offset + 12],
+            wal[offset + 13],
+            wal[offset + 14],
+            wal[offset + 15],
+        ]);
+        if page_no == 0 || frame_salt_1 != salt_1 || frame_salt_2 != salt_2 {
+            break;
+        }
+        let page_start = offset + 24;
+        frames.push(WalFrame {
+            page_no,
+            page_start,
+        });
+        if db_size > 0 {
+            last_commit = Some((frames.len(), db_size));
         }
         offset += frame_size;
     }
+
+    let Some((last_commit_frame_count, commit_db_pages)) = last_commit else {
+        return Ok(());
+    };
+
+    let mut db = OpenOptions::new().read(true).write(true).open(db_copy)?;
+    for frame in frames.iter().take(last_commit_frame_count) {
+        let page_no = frame.page_no as u64;
+        if page_no > 0 {
+            let page_offset = (page_no - 1) * page_size as u64;
+            db.seek(SeekFrom::Start(page_offset))?;
+            db.write_all(&wal[frame.page_start..frame.page_start + page_size])?;
+        }
+    }
+    db.set_len(commit_db_pages as u64 * page_size as u64)?;
     db.flush()?;
     Ok(())
 }
@@ -376,4 +428,122 @@ pub fn copy_live_triplet(live_db: &Path, backup_dir: &Path) -> CoreResult<Vec<Pa
         }
     }
     Ok(copied)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env,
+        fs::{self, File},
+        io::{Read, Write},
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{checkpoint_wal_into_copy, PAGE_SIZE};
+
+    const SALT_1: u32 = 0x1234_5678;
+    const SALT_2: u32 = 0x90ab_cdef;
+
+    #[test]
+    fn wal_checkpoint_honors_commit_db_size_truncation() {
+        let dir = test_dir("wal-truncate");
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("database.db");
+        let wal = dir.join("database.db-wal");
+        write_pages(&db, &[b'A', b'B', b'C']);
+        write_wal(
+            &wal,
+            &[(3, 3, filled_page(b'D')), (2, 2, filled_page(b'E'))],
+        );
+
+        checkpoint_wal_into_copy(&db, &wal).unwrap();
+
+        assert_eq!(fs::metadata(&db).unwrap().len(), (PAGE_SIZE * 2) as u64);
+        assert_eq!(read_page_byte(&db, 1), b'A');
+        assert_eq!(read_page_byte(&db, 2), b'E');
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wal_checkpoint_ignores_frames_after_last_commit() {
+        let dir = test_dir("wal-uncommitted-tail");
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("database.db");
+        let wal = dir.join("database.db-wal");
+        write_pages(&db, &[b'A', b'B']);
+        write_wal(
+            &wal,
+            &[(2, 2, filled_page(b'C')), (2, 0, filled_page(b'D'))],
+        );
+
+        checkpoint_wal_into_copy(&db, &wal).unwrap();
+
+        assert_eq!(fs::metadata(&db).unwrap().len(), (PAGE_SIZE * 2) as u64);
+        assert_eq!(read_page_byte(&db, 2), b'C');
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wal_checkpoint_ignores_wal_without_commit_frame() {
+        let dir = test_dir("wal-no-commit");
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("database.db");
+        let wal = dir.join("database.db-wal");
+        write_pages(&db, &[b'A']);
+        write_wal(&wal, &[(1, 0, filled_page(b'Z'))]);
+
+        checkpoint_wal_into_copy(&db, &wal).unwrap();
+
+        assert_eq!(fs::metadata(&db).unwrap().len(), PAGE_SIZE as u64);
+        assert_eq!(read_page_byte(&db, 1), b'A');
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!("lcb-{name}-{nanos}"))
+    }
+
+    fn write_pages(path: &Path, markers: &[u8]) {
+        let mut file = File::create(path).unwrap();
+        for marker in markers {
+            file.write_all(&filled_page(*marker)).unwrap();
+        }
+    }
+
+    fn write_wal(path: &Path, frames: &[(u32, u32, Vec<u8>)]) {
+        let mut file = File::create(path).unwrap();
+        file.write_all(&0x377f0682u32.to_be_bytes()).unwrap();
+        file.write_all(&3007000u32.to_be_bytes()).unwrap();
+        file.write_all(&(PAGE_SIZE as u32).to_be_bytes()).unwrap();
+        file.write_all(&1u32.to_be_bytes()).unwrap();
+        file.write_all(&SALT_1.to_be_bytes()).unwrap();
+        file.write_all(&SALT_2.to_be_bytes()).unwrap();
+        file.write_all(&0u32.to_be_bytes()).unwrap();
+        file.write_all(&0u32.to_be_bytes()).unwrap();
+        for (page_no, db_size, page) in frames {
+            file.write_all(&page_no.to_be_bytes()).unwrap();
+            file.write_all(&db_size.to_be_bytes()).unwrap();
+            file.write_all(&SALT_1.to_be_bytes()).unwrap();
+            file.write_all(&SALT_2.to_be_bytes()).unwrap();
+            file.write_all(&0u32.to_be_bytes()).unwrap();
+            file.write_all(&0u32.to_be_bytes()).unwrap();
+            file.write_all(page).unwrap();
+        }
+    }
+
+    fn filled_page(marker: u8) -> Vec<u8> {
+        vec![marker; PAGE_SIZE]
+    }
+
+    fn read_page_byte(path: &Path, page_no: usize) -> u8 {
+        let mut file = File::open(path).unwrap();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        data[(page_no - 1) * PAGE_SIZE]
+    }
 }

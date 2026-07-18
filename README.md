@@ -21,9 +21,9 @@ Get the latest desktop build from [GitHub Releases](https://github.com/Wyy326/lo
 
 | Asset | Best for | Notes |
 | --- | --- | --- |
-| `Local-Context-Bridge-v0.1.0-Windows-Portable.zip` | Complete portable package | The all-in-one archive. Unzip it and run the desktop executable. Includes README, license, and release notes. |
-| `Local-Context-Bridge-v0.1.0-Windows-x64-setup.exe` | Most Windows users | NSIS installer with a familiar setup wizard. |
-| `Local-Context-Bridge-v0.1.0-Windows-x64.msi` | Managed or enterprise-style installs | MSI package for Windows installer workflows. |
+| `Local-Context-Bridge-v0.1.1-Windows-Portable.zip` | Complete portable package | The all-in-one archive. Unzip it and run the desktop executable. Includes README, license, and release notes. |
+| `Local-Context-Bridge-v0.1.1-Windows-x64-setup.exe` | Most Windows users | NSIS installer with a familiar setup wizard. |
+| `Local-Context-Bridge-v0.1.1-Windows-x64.msi` | Managed or enterprise-style installs | MSI package for Windows installer workflows. |
 
 Early builds are unsigned, so Windows SmartScreen may show a warning. The app is local-only and does not upload databases, logs, account IDs, or telemetry.
 

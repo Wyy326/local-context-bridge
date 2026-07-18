@@ -193,6 +193,14 @@ fn patch_plain_database(
     selection: &TransferSelection,
 ) -> CoreResult<Vec<TransferAction>> {
     let mut conn = Connection::open(db_path)?;
+    let initial_integrity: String =
+        conn.query_row("pragma integrity_check", [], |row| row.get(0))?;
+    if initial_integrity != "ok" {
+        return Err(CoreError::Message(format!(
+            "source database snapshot failed integrity_check before patch: {initial_integrity}"
+        )));
+    }
+
     let tx = conn.transaction()?;
     let actions = match selection.mode {
         TransferMode::Project => patch_projects(&tx, selection)?,

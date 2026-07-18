@@ -1,4 +1,4 @@
-Local Context Bridge v0.1.0 Portable Package
+Local Context Bridge v0.1.1 Portable Package
 
 This ZIP is the complete portable desktop package for Windows users who do not want an installer.
 
