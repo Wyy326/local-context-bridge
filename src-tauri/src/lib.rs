@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use tauri::{Manager, State};
+use tauri::{async_runtime, Manager, State};
 use trae_core::{
     AnalysisResult, AppDiscoveryResult, ApplyResult, DatabaseLocation, RollbackResult,
     TransferPlan, TransferSelection, VerifyResult,
@@ -12,17 +12,20 @@ struct PlanStore {
 }
 
 #[tauri::command]
-fn scan_installations() -> Result<AppDiscoveryResult, String> {
-    trae_core::scan_installations().map_err(to_string)
+async fn scan_installations() -> Result<AppDiscoveryResult, String> {
+    run_blocking(|| trae_core::scan_installations().map_err(to_string)).await
 }
 
 #[tauri::command]
-fn manual_discovery(
+async fn manual_discovery(
     app_exe: Option<String>,
     database_path: Option<String>,
     backup_dir: Option<String>,
 ) -> Result<AppDiscoveryResult, String> {
-    trae_core::manual_discovery(app_exe, database_path, backup_dir).map_err(to_string)
+    run_blocking(move || {
+        trae_core::manual_discovery(app_exe, database_path, backup_dir).map_err(to_string)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -44,16 +47,20 @@ fn pick_database_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn analyze_database(location: DatabaseLocation) -> Result<AnalysisResult, String> {
-    trae_core::analyze_database(location).map_err(to_string)
+async fn analyze_database(location: DatabaseLocation) -> Result<AnalysisResult, String> {
+    run_blocking(move || trae_core::analyze_database(location).map_err(to_string)).await
 }
 
 #[tauri::command]
-fn preview_transfer(
+async fn preview_transfer(
     selection: TransferSelection,
     store: State<'_, PlanStore>,
 ) -> Result<TransferPlan, String> {
-    let plan = trae_core::preview_transfer(selection.clone()).map_err(to_string)?;
+    let plan = run_blocking({
+        let selection = selection.clone();
+        move || trae_core::preview_transfer(selection).map_err(to_string)
+    })
+    .await?;
     store
         .selections
         .lock()
@@ -63,7 +70,10 @@ fn preview_transfer(
 }
 
 #[tauri::command]
-fn apply_transfer(plan_id: String, store: State<'_, PlanStore>) -> Result<ApplyResult, String> {
+async fn apply_transfer(
+    plan_id: String,
+    store: State<'_, PlanStore>,
+) -> Result<ApplyResult, String> {
     let selection = store
         .selections
         .lock()
@@ -71,17 +81,17 @@ fn apply_transfer(plan_id: String, store: State<'_, PlanStore>) -> Result<ApplyR
         .get(&plan_id)
         .cloned()
         .ok_or_else(|| "plan_id not found; generate a preview first".to_string())?;
-    trae_core::apply_transfer(&selection, &plan_id).map_err(to_string)
+    run_blocking(move || trae_core::apply_transfer(&selection, &plan_id).map_err(to_string)).await
 }
 
 #[tauri::command]
-fn verify_frontend() -> Result<VerifyResult, String> {
-    trae_core::verify_frontend_logs().map_err(to_string)
+async fn verify_frontend() -> Result<VerifyResult, String> {
+    run_blocking(|| trae_core::verify_frontend_logs().map_err(to_string)).await
 }
 
 #[tauri::command]
-fn rollback(backup_id: String) -> Result<RollbackResult, String> {
-    trae_core::rollback_backup(&backup_id).map_err(to_string)
+async fn rollback(backup_id: String) -> Result<RollbackResult, String> {
+    run_blocking(move || trae_core::rollback_backup(&backup_id).map_err(to_string)).await
 }
 
 #[tauri::command]
@@ -91,10 +101,8 @@ fn open_path(path: String) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        std::process::Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(to_string)?;
+        let mut command = hidden_command("explorer");
+        command.arg(path).spawn().map_err(to_string)?;
     }
     #[cfg(not(windows))]
     {
@@ -107,8 +115,8 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn close_trae() -> Result<usize, String> {
-    trae_core::close_trae_processes().map_err(to_string)
+async fn close_trae() -> Result<usize, String> {
+    run_blocking(|| trae_core::close_trae_processes().map_err(to_string)).await
 }
 
 pub fn run() {
@@ -139,4 +147,24 @@ pub fn run() {
 
 fn to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(windows)]
+fn hidden_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+async fn run_blocking<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    async_runtime::spawn_blocking(task)
+        .await
+        .map_err(to_string)?
 }

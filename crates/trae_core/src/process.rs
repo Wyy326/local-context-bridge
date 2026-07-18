@@ -1,18 +1,18 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use walkdir::WalkDir;
 
-use crate::{error::CoreResult, paths, types::VerifyResult};
+use crate::{command::hidden_command, error::CoreResult, paths, types::VerifyResult};
 
 pub fn is_trae_running() -> bool {
-    let output = Command::new("powershell")
+    let output = hidden_command("powershell")
         .args([
             "-NoLogo",
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
             r#"$items = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*TRAE SOLO CN*' }; @($items).Count"#,
         ])
@@ -28,10 +28,11 @@ pub fn is_trae_running() -> bool {
 }
 
 pub fn close_trae_processes() -> CoreResult<usize> {
-    let output = Command::new("powershell")
+    let output = hidden_command("powershell")
         .args([
             "-NoLogo",
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
             r#"$items = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*TRAE SOLO CN*' }; $count=0; foreach ($item in $items) { Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue; $count += 1 }; $count"#,
         ])

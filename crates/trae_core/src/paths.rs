@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
     time::UNIX_EPOCH,
 };
 
@@ -10,6 +9,7 @@ use regex::Regex;
 use walkdir::WalkDir;
 
 use crate::{
+    command::hidden_command,
     error::CoreResult,
     types::{AppDiscoveryResult, CurrentUserCandidate},
 };
@@ -222,10 +222,11 @@ fn discover_app_exe() -> CoreResult<Option<PathBuf>> {
 }
 
 fn running_process_path() -> CoreResult<Option<PathBuf>> {
-    let output = Command::new("powershell")
+    let output = hidden_command("powershell")
         .args([
             "-NoLogo",
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
             r#"$p = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*TRAE SOLO CN*' } | Select-Object -First 1 -ExpandProperty ExecutablePath; if ($p) { $p }"#,
         ])

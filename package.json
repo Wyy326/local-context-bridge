@@ -1,6 +1,6 @@
 {
   "name": "local-context-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Local desktop tool for moving local chat context between TRAE SOLO CN accounts.",

@@ -1,3 +1,4 @@
+mod command;
 mod crypto;
 mod database;
 mod error;
